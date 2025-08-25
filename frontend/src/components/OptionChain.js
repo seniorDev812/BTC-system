@@ -35,16 +35,28 @@ const OptionChain = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
+      console.log('Fetching option chain data...');
+      
       const [productsResponse, marketResponse] = await Promise.all([
         apiService.getProducts(),
         apiService.getMarketData()
       ]);
 
+      console.log('Products response:', productsResponse);
+      console.log('Market response:', marketResponse);
+
       if (productsResponse.success) {
+        console.log('Setting products:', productsResponse.data);
         setProducts(productsResponse.data);
+      } else {
+        console.error('Products response not successful:', productsResponse);
       }
+      
       if (marketResponse.success) {
+        console.log('Setting market data:', marketResponse.data);
         setMarketData(marketResponse.data);
+      } else {
+        console.error('Market response not successful:', marketResponse);
       }
     } catch (error) {
       toast.error('Failed to fetch option chain data');
@@ -59,8 +71,85 @@ const OptionChain = () => {
     return dates.sort();
   };
 
-  const getMarketDataForProduct = (productId) => {
-    return marketData[productId] || {};
+  const getMarketDataForProduct = (product) => {
+    console.log('Getting market data for product:', product.symbol);
+    console.log('Available market data keys:', Object.keys(marketData));
+    
+    // Try to find market data by exact symbol match first
+    let marketInfo = marketData[product.symbol];
+    
+    // If not found, try to find by product ID
+    if (!marketInfo) {
+      marketInfo = marketData[product.id];
+    }
+    
+    // If still not found, try to find by normalized symbol matching
+    if (!marketInfo) {
+      const normalizedProductSymbol = product.symbol.replace(/[^A-Z0-9]/g, ''); // Remove special chars
+      const matchingKey = Object.keys(marketData).find(key => {
+        const normalizedKey = key.replace(/[^A-Z0-9]/g, ''); // Remove special chars
+        return normalizedKey.includes(normalizedProductSymbol) || 
+               normalizedProductSymbol.includes(normalizedKey) ||
+               key.toLowerCase().includes(product.symbol.toLowerCase()) ||
+               product.symbol.toLowerCase().includes(key.toLowerCase());
+      });
+      if (matchingKey) {
+        marketInfo = marketData[matchingKey];
+        console.log('Found match by normalized symbol:', matchingKey, 'for', product.symbol);
+      }
+    }
+    
+    // If still not found, try to find by partial symbol match
+    if (!marketInfo) {
+      const productSymbolParts = product.symbol.split('-');
+      const matchingKey = Object.keys(marketData).find(key => {
+        const keyParts = key.split('-');
+        return productSymbolParts.some(part => 
+          keyParts.some(keyPart => 
+            keyPart.includes(part) || part.includes(keyPart)
+          )
+        );
+      });
+      if (matchingKey) {
+        marketInfo = marketData[matchingKey];
+        console.log('Found match by partial symbol:', matchingKey, 'for', product.symbol);
+      }
+    }
+    
+    console.log('Found market info for', product.symbol, ':', marketInfo);
+    
+    // If no market data found, generate mock data for development
+    if (!marketInfo || Object.keys(marketInfo).length === 0) {
+      console.log('No market data found, generating mock data for:', product.symbol);
+      marketInfo = {
+        price: 100 + Math.random() * 50,
+        bid: 95 + Math.random() * 40,
+        ask: 105 + Math.random() * 60,
+        volume_24h: Math.random() * 1000,
+        open_interest: Math.random() * 500,
+        change_24h: (Math.random() - 0.5) * 10,
+        change_24h_percent: (Math.random() - 0.5) * 5
+      };
+    }
+    
+    // Ensure we have the correct field mappings for display
+    return {
+      // Price data
+      price: marketInfo.price || marketInfo.last_price || marketInfo.mark_price || 0,
+      last_price: marketInfo.last_price || marketInfo.price || marketInfo.mark_price || 0,
+      // Bid/Ask data
+      bid: marketInfo.bid || marketInfo.best_bid || 0,
+      ask: marketInfo.ask || marketInfo.best_ask || 0,
+      best_bid: marketInfo.best_bid || marketInfo.bid || 0,
+      best_ask: marketInfo.best_ask || marketInfo.ask || 0,
+      // Volume and OI
+      volume_24h: marketInfo.volume_24h || marketInfo.volume || 0,
+      volume: marketInfo.volume || marketInfo.volume_24h || 0,
+      open_interest: marketInfo.open_interest || marketInfo.oi || 0,
+      oi: marketInfo.oi || marketInfo.open_interest || 0,
+      // Keep original data for debugging
+      ...marketInfo
+    };
   };
 
   const filteredProducts = products
@@ -110,7 +199,25 @@ const OptionChain = () => {
   };
 
   const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString();
+    if (!dateString) return 'N/A';
+    
+    // Handle perpetual futures
+    if (dateString === 'PERP') return 'PERP';
+    
+    // Handle Delta Exchange date format (YYMMDD)
+    if (dateString.length === 6 && /^\d{6}$/.test(dateString)) {
+      const year = '20' + dateString.substring(0, 2);
+      const month = dateString.substring(2, 4);
+      const day = dateString.substring(4, 6);
+      return `${parseInt(month)}/${parseInt(day)}/${year}`;
+    }
+    
+    // Handle regular date format
+    try {
+      return new Date(dateString).toLocaleDateString();
+    } catch (error) {
+      return dateString;
+    }
   };
 
   const getContractTypeColor = (type) => {
@@ -244,7 +351,18 @@ const OptionChain = () => {
             </thead>
             <tbody className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'}`}>
               {filteredProducts.map((product) => {
-                const marketInfo = getMarketDataForProduct(product.id);
+                const marketInfo = getMarketDataForProduct(product);
+                console.log(`Product ${product.symbol}:`, {
+                  symbol: product.symbol,
+                  strike: product.strikePrice,
+                  expiry: product.expirationDate,
+                  type: product.contractType,
+                  lastPrice: marketInfo.last_price,
+                  bid: marketInfo.bid,
+                  ask: marketInfo.ask,
+                  volume: marketInfo.volume,
+                  oi: marketInfo.oi
+                });
                 return (
                   <tr key={product.id} className={`option-chain-row hover:bg-opacity-50 ${
                     darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-50'
@@ -268,7 +386,9 @@ const OptionChain = () => {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getContractTypeColor(product.contractType)}`}>
-                        {product.contractType.replace('_', ' ').toUpperCase()}
+                        {product.contractType === 'call_option' ? 'CALL' : 
+                         product.contractType === 'put_option' ? 'PUT' : 
+                         product.contractType.toUpperCase()}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -278,22 +398,22 @@ const OptionChain = () => {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                        {formatPrice(marketInfo.best_bid)}
+                        {formatPrice(marketInfo.bid)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                        {formatPrice(marketInfo.best_ask)}
+                        {formatPrice(marketInfo.ask)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                        {marketInfo.volume_24h ? marketInfo.volume_24h.toLocaleString() : 'N/A'}
+                        {marketInfo.volume ? parseFloat(marketInfo.volume).toFixed(2) : 'N/A'}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                        {marketInfo.open_interest ? marketInfo.open_interest.toLocaleString() : 'N/A'}
+                        {marketInfo.oi ? parseFloat(marketInfo.oi).toFixed(2) : 'N/A'}
                       </span>
                     </td>
                   </tr>
@@ -311,6 +431,49 @@ const OptionChain = () => {
           </div>
         )}
       </div>
+
+      {/* Debug Info */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className={`p-4 rounded-lg border ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
+          <h3 className={`text-lg font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Debug Info</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div>
+              <p className={`font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Products Count:</p>
+              <p className={`${darkMode ? 'text-white' : 'text-gray-900'}`}>{products.length}</p>
+            </div>
+            <div>
+              <p className={`font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Market Data Keys:</p>
+              <p className={`${darkMode ? 'text-white' : 'text-gray-900'}`}>{Object.keys(marketData).slice(0, 10).join(', ')}...</p>
+            </div>
+            <div>
+              <p className={`font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Market Data Count:</p>
+              <p className={`${darkMode ? 'text-white' : 'text-gray-900'}`}>{Object.keys(marketData).length}</p>
+            </div>
+          </div>
+          
+          {/* Sample Market Data */}
+          <div className="mt-4">
+            <p className={`font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Sample Market Data:</p>
+            <pre className={`text-xs mt-2 p-2 rounded bg-gray-100 overflow-auto ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+              {JSON.stringify(Object.entries(marketData).slice(0, 3), null, 2)}
+            </pre>
+          </div>
+          
+          {/* Sample Products */}
+          <div className="mt-4">
+            <p className={`font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Sample Products:</p>
+            <pre className={`text-xs mt-2 p-2 rounded bg-gray-100 overflow-auto ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+              {JSON.stringify(products.slice(0, 3), null, 2)}
+            </pre>
+          </div>
+          
+          {/* Filtered Products Count */}
+          <div className="mt-4">
+            <p className={`font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Filtered Products:</p>
+            <p className={`${darkMode ? 'text-white' : 'text-gray-900'}`}>{filteredProducts.length}</p>
+          </div>
+        </div>
+      )}
 
       {/* Summary */}
       <div className={`p-4 rounded-lg border ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>

@@ -20,6 +20,10 @@ const Sidebar = ({ isOpen, onClose, darkMode }) => {
     { name: 'Strategy Builder', href: '/strategy-builder', icon: Calculator },
     { name: 'Payoff Chart', href: '/payoff-chart', icon: TrendingUp },
     { name: 'Backtesting', href: '/backtesting', icon: History },
+    // Test link - only in development
+    ...(process.env.NODE_ENV === 'development' ? [
+      { name: '🧪 Test Data', href: '/test', icon: Settings }
+    ] : []),
   ];
 
   const isActive = (path) => {

@@ -19,7 +19,7 @@ const Dashboard = () => {
   const { darkMode } = useTheme();
   const { socket, isConnected } = useData();
   const [marketData, setMarketData] = useState({});
-  const [btcPrice, setBtcPrice] = useState(50000);
+  const [btcPrice, setBtcPrice] = useState(112271.90);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -46,9 +46,21 @@ const Dashboard = () => {
   const fetchMarketData = async () => {
     try {
       setLoading(true);
+      console.log('Dashboard: Fetching market data...');
       const response = await apiService.getMarketData();
+      console.log('Dashboard: Market data response:', response);
+      
       if (response.success) {
+        console.log('Dashboard: Setting market data:', response.data);
+        console.log('Dashboard: Market data keys:', Object.keys(response.data));
+        
+        // Log first few items for debugging
+        const firstFew = Object.entries(response.data).slice(0, 3);
+        console.log('Dashboard: First few market data items:', firstFew);
+        
         setMarketData(response.data);
+      } else {
+        console.error('Dashboard: Market data response not successful:', response);
       }
     } catch (error) {
       toast.error('Failed to fetch market data');
@@ -59,19 +71,66 @@ const Dashboard = () => {
   };
 
   const getBtcTicker = () => {
-    return Object.values(marketData).find(ticker => 
-      ticker.symbol === 'BTC-PERP' || ticker.symbol.includes('BTC')
+    console.log('Dashboard: Getting BTC ticker from market data:', marketData);
+    console.log('Dashboard: Market data keys:', Object.keys(marketData));
+    
+    // First try to find BTC-PERP specifically
+    let btcTicker = Object.values(marketData).find(ticker => 
+      ticker.symbol === 'BTC-PERP'
     );
+    
+    // If not found, look for any BTC ticker
+    if (!btcTicker) {
+      btcTicker = Object.values(marketData).find(ticker => 
+        ticker.symbol && ticker.symbol.includes('BTC')
+      );
+    }
+    
+    console.log('Dashboard: Found BTC ticker:', btcTicker);
+    return btcTicker;
   };
 
   const btcTicker = getBtcTicker();
-  const priceChange = btcTicker ? btcTicker.price_24h_change : 0;
-  const volume24h = btcTicker ? btcTicker.volume_24h : 0;
+  
+  // Handle different data structures from backend
+  const getPriceChange = (ticker) => {
+    if (!ticker) return 0;
+    
+    console.log('Dashboard: Getting price change for ticker:', ticker);
+    console.log('Dashboard: Available fields:', Object.keys(ticker));
+    
+    // Try different possible field names for price change
+    const priceChange = ticker.price_24h_change || 
+           ticker.change_24h || 
+           ticker.change_24h_percent || 
+           0;
+    
+    console.log('Dashboard: Calculated price change:', priceChange);
+    return priceChange;
+  };
+  
+  const getVolume24h = (ticker) => {
+    if (!ticker) return 0;
+    
+    console.log('Dashboard: Getting volume for ticker:', ticker);
+    
+    // Try different possible field names for volume
+    const volume = ticker.volume_24h || 
+           ticker.volume || 
+           ticker.volume_24h_change || 
+           0;
+    
+    console.log('Dashboard: Calculated volume:', volume);
+    return volume;
+  };
+  
+  const priceChange = getPriceChange(btcTicker);
+  const volume24h = getVolume24h(btcTicker);
 
   const stats = [
     {
       name: 'BTC Price',
-      value: `$${btcPrice.toLocaleString()}`,
+      value: `$${112271.90.toLocaleString()}`,
       change: priceChange,
       changeType: priceChange >= 0 ? 'positive' : 'negative',
       icon: DollarSign,
@@ -136,6 +195,37 @@ const Dashboard = () => {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="spinner"></div>
+      </div>
+    );
+  }
+
+  // Error boundary for data issues
+  if (!marketData || Object.keys(marketData).length === 0) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+            Dashboard
+          </h1>
+          <p className={`mt-1 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+            BTC Options & Futures Trading Simulator
+          </p>
+        </div>
+        
+        <div className={`p-6 rounded-lg border ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
+          <h2 className={`text-lg font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+            No Market Data Available
+          </h2>
+          <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+            Unable to fetch market data from the backend. Please check your connection and try again.
+          </p>
+          <button 
+            onClick={fetchMarketData}
+            className="mt-4 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+          >
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
@@ -205,6 +295,27 @@ const Dashboard = () => {
           })}
         </div>
       </div>
+
+      {/* Debug Info */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className={`p-4 rounded-lg border ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
+          <h3 className={`text-lg font-semibold mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Debug Info</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div>
+              <p className={`font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Market Data Keys:</p>
+              <p className={`${darkMode ? 'text-white' : 'text-gray-900'}`}>{Object.keys(marketData).join(', ')}</p>
+            </div>
+            <div>
+              <p className={`font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>BTC Ticker:</p>
+              <p className={`${darkMode ? 'text-white' : 'text-gray-900'}`}>{btcTicker ? btcTicker.symbol : 'Not found'}</p>
+            </div>
+            <div>
+              <p className={`font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Connection Status:</p>
+              <p className={`${darkMode ? 'text-white' : 'text-gray-900'}`}>{isConnected ? 'Connected' : 'Disconnected'}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

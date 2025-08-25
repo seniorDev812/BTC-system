@@ -72,4 +72,9 @@ export const apiService = {
   healthCheck: async () => {
     return apiClient.get('/health');
   },
+
+  // Test matching
+  testMatching: async () => {
+    return apiClient.get('/test-matching');
+  },
 };

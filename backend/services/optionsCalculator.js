@@ -256,7 +256,8 @@ class OptionsCalculator {
   // Find break-even points
   findBreakEvenPoints(payoffData) {
     const breakEvenPoints = [];
-    
+    const epsilon = 1e-6;
+
     for (let i = 1; i < payoffData.length; i++) {
       const prev = payoffData[i - 1];
       const curr = payoffData[i];
@@ -264,9 +265,21 @@ class OptionsCalculator {
       if ((prev.payoff <= 0 && curr.payoff >= 0) || 
           (prev.payoff >= 0 && curr.payoff <= 0)) {
         // Linear interpolation to find exact break-even point
-        const ratio = Math.abs(prev.payoff) / (Math.abs(prev.payoff) + Math.abs(curr.payoff));
+        const denom = Math.abs(prev.payoff) + Math.abs(curr.payoff);
+        if (denom < epsilon) {
+          continue;
+        }
+        const ratio = Math.abs(prev.payoff) / denom;
         const breakEvenPrice = prev.price + ratio * (curr.price - prev.price);
-        breakEvenPoints.push(Math.round(breakEvenPrice * 100) / 100);
+        const price = Math.round(breakEvenPrice * 100) / 100;
+
+        if (Number.isFinite(price)) {
+          // Deduplicate close points
+          const isDuplicate = breakEvenPoints.some(p => Math.abs(p - price) < 0.5);
+          if (!isDuplicate) {
+            breakEvenPoints.push(price);
+          }
+        }
       }
     }
     

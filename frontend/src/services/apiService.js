@@ -43,6 +43,21 @@ export const apiService = {
     return apiClient.get('/market-data');
   },
 
+  getBitcoinPrice: async () => {
+    return apiClient.get('/bitcoin-price');
+  },
+
+  getExpirations: async () => {
+    return apiClient.get('/expirations');
+  },
+
+  getHistoricalData: async (productId, interval = '1D', limit = 100, startTime, endTime) => {
+    const params = new URLSearchParams({ interval, limit });
+    if (startTime) params.append('startTime', startTime);
+    if (endTime) params.append('endTime', endTime);
+    return apiClient.get(`/historical/${productId}?${params}`);
+  },
+
   getOrderBook: async (productId, depth = 20) => {
     return apiClient.get(`/orderbook/${productId}?depth=${depth}`);
   },

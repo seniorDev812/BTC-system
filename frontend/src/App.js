@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import { Moon, Sun, Menu, X } from 'lucide-react';
+// Removed unused imports: Moon, Sun, Menu, X
 import io from 'socket.io-client';
 
 // Components
@@ -11,6 +11,14 @@ import OptionChain from './components/OptionChain';
 import StrategyBuilder from './components/StrategyBuilder';
 import PayoffChart from './components/PayoffChart';
 import Backtesting from './components/Backtesting';
+import Dashboard from './components/Dashboard';
+
+// Context
+import { ThemeProvider } from './context/ThemeContext';
+import { DataProvider } from './context/DataContext';
+
+// Services
+import { apiService } from './services/apiService';
 
 // Simple test component
 const TestData = () => {
@@ -81,14 +89,6 @@ const TestData = () => {
     </div>
   );
 };
-import Dashboard from './components/Dashboard';
-
-// Context
-import { ThemeProvider } from './context/ThemeContext';
-import { DataProvider } from './context/DataContext';
-
-// Services
-import { apiService } from './services/apiService';
 
 function App() {
   const [darkMode, setDarkMode] = useState(false);

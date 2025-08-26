@@ -4,13 +4,10 @@ import { useData } from '../context/DataContext';
 import { apiService } from '../services/apiService';
 import { 
   TrendingUp, 
-  TrendingDown, 
   DollarSign, 
   BarChart3,
   Calculator,
   History,
-  ArrowUpRight,
-  ArrowDownRight,
   Activity
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -19,11 +16,12 @@ const Dashboard = () => {
   const { darkMode } = useTheme();
   const { socket, isConnected } = useData();
   const [marketData, setMarketData] = useState({});
-  const [btcPrice, setBtcPrice] = useState(112271.90);
+  const [btcPrice, setBtcPrice] = useState(65000);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchMarketData();
+    fetchBitcoinPrice();
     
     if (socket) {
       socket.on('btcPrice', (price) => {
@@ -42,6 +40,17 @@ const Dashboard = () => {
       }
     };
   }, [socket]);
+
+  const fetchBitcoinPrice = async () => {
+    try {
+      const response = await apiService.getBitcoinPrice();
+      if (response.success) {
+        setBtcPrice(response.data.price);
+      }
+    } catch (error) {
+      console.error('Error fetching Bitcoin price:', error);
+    }
+  };
 
   const fetchMarketData = async () => {
     try {
@@ -130,7 +139,7 @@ const Dashboard = () => {
   const stats = [
     {
       name: 'BTC Price',
-      value: `$${112271.90.toLocaleString()}`,
+      value: `$${btcPrice.toLocaleString()}`,
       change: priceChange,
       changeType: priceChange >= 0 ? 'positive' : 'negative',
       icon: DollarSign,

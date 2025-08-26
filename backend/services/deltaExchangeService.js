@@ -79,12 +79,11 @@ class DeltaExchangeService {
     }
   }
 
-  // Get all BTC options and futures
+  // Get all BTC options and futures with all expirations
   async getBTCOptionsAndFutures() {
     try {
       console.log('Fetching products from Delta Exchange...');
       const response = await axios.get(`${this.apiUrl}/v2/products`);
-      console.log('Products response:', response.data);
       
       if (!response.data || !response.data.result) {
         throw new Error('Invalid response format from Delta Exchange API');
@@ -93,32 +92,60 @@ class DeltaExchangeService {
       const products = response.data.result;
       console.log(`Total products received: ${products.length}`);
       
-      // Filter for BTC options and futures
+      // Filter for BTC options and futures (tolerant to field naming)
       const btcProducts = products.filter(product => {
-        const isBTC = product.underlying_asset && product.underlying_asset.symbol === 'BTC';
-        const isOptionOrFuture = product.contract_type === 'call_option' || 
-                                product.contract_type === 'put_option' || 
-                                product.contract_type === 'futures';
+        const symbol = product.symbol || product.product_symbol || '';
+        const underlyingObj = product.underlying_asset;
+        const underlyingSymbol = (underlyingObj && (underlyingObj.symbol || underlyingObj.asset || underlyingObj.ticker))
+          || product.underlying_asset_symbol
+          || product.underlying_symbol
+          || '';
+        const isBTC = underlyingSymbol === 'BTC' || symbol.includes('BTC') || product.underlying_asset === 'BTC';
+
+        const ctRaw = (product.contract_type || product.contractType || '').toString().toLowerCase();
+        const isOptionOrFuture = ctRaw.includes('call') || ctRaw.includes('put') || ctRaw.includes('future') || ctRaw.includes('perp');
         return isBTC && isOptionOrFuture;
       });
 
       console.log(`BTC products found: ${btcProducts.length}`);
 
-      return btcProducts.map(product => ({
-        id: product.id,
-        symbol: product.symbol,
-        contractType: product.contract_type,
-        strikePrice: parseFloat(product.strike_price) || 0,
-        expirationDate: product.settlement_time ? new Date(product.settlement_time).toISOString().split('T')[0] : '2024-12-31',
-        underlyingAsset: product.underlying_asset ? product.underlying_asset.symbol : 'BTC',
-        tickSize: parseFloat(product.tick_size) || 0.1,
-        lotSize: parseFloat(product.lot_size) || 1,
-        minOrderSize: parseFloat(product.min_order_size) || 0.01,
-        maxOrderSize: parseFloat(product.max_order_size) || 1000,
-        isActive: product.is_active || true,
-        // Add original product data for debugging
-        originalData: product
-      }));
+      // Convert to unified format expected by frontend
+      const formattedProducts = btcProducts.map(product => {
+        const ctRaw = (product.contract_type || product.contractType || '').toString().toLowerCase();
+        const contractType = ctRaw.includes('call') ? 'call_option' : ctRaw.includes('put') ? 'put_option' : 'futures';
+        const settlement = product.settlement_time || product.settlement || product.expiry_time || product.expiration_time;
+        let expiryDate = 'PERP';
+        if (settlement) {
+          try {
+            expiryDate = new Date(settlement).toISOString().split('T')[0];
+          } catch (e) {
+            expiryDate = typeof settlement === 'string' ? settlement : '2024-12-31';
+          }
+        } else if (contractType !== 'futures') {
+          // Fallback placeholder for options if settlement missing
+          expiryDate = '2024-12-31';
+        }
+
+        const strikePrice = parseFloat(product.strike_price || product.strike || product.strikePrice || 0) || 0;
+
+        return {
+          id: product.id || product.product_id || `${product.symbol || 'BTC'}_${contractType}_${strikePrice}_${expiryDate}`,
+          symbol: product.symbol || product.product_symbol || 'BTC-UNKNOWN',
+          contractType,
+          strikePrice,
+          expirationDate: expiryDate,
+          underlyingAsset: (product.underlying_asset && (product.underlying_asset.symbol || product.underlying_asset)) || product.underlying_asset_symbol || 'BTC',
+          tickSize: parseFloat(product.tick_size || product.tickSize || 0.1) || 0.1,
+          lotSize: parseFloat(product.lot_size || product.lotSize || 1) || 1,
+          minOrderSize: parseFloat(product.min_order_size || product.minOrderSize || 0.01) || 0.01,
+          maxOrderSize: parseFloat(product.max_order_size || product.maxOrderSize || 1000) || 1000,
+          isActive: product.is_active !== undefined ? product.is_active : true,
+          settlementTime: settlement || null,
+          originalData: product
+        };
+      });
+
+      return formattedProducts;
     } catch (error) {
       console.error('Error fetching BTC products:', error.response?.data || error.message);
       

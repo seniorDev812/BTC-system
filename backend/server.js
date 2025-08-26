@@ -8,6 +8,7 @@ const socketIo = require('socket.io');
 const config = require('./config');
 const deltaExchangeService = require('./services/deltaExchangeService');
 const optionsCalculator = require('./services/optionsCalculator');
+const bitcoinPriceService = require('./services/bitcoinPriceService');
 
 const app = express();
 const server = http.createServer(app);
@@ -27,12 +28,24 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
  // Global variables
- let currentBTCPrice = 112271.90; // Current realistic BTC price
+ let currentBTCPrice = 65000; // Will be updated by Bitcoin price service
 let optionsData = [];
 let marketData = {};
 
-// Initialize Delta Exchange connection
+// Initialize services
 deltaExchangeService.connectWebSocket();
+bitcoinPriceService.startPeriodicUpdates();
+
+// Subscribe to Bitcoin price updates
+bitcoinPriceService.subscribe((priceData) => {
+  currentBTCPrice = priceData.price;
+  console.log(`Bitcoin price updated to: $${currentBTCPrice.toLocaleString()}`);
+  
+  // Broadcast to all connected clients
+  io.emit('btcPrice', currentBTCPrice);
+});
+
+console.log('🚀 Bitcoin price service initialized - will update every 2 minutes');
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
@@ -80,9 +93,35 @@ io.on('connection', (socket) => {
     console.log('Generating mock products for display...');
     const mockProducts = [];
     
-    // Generate mock BTC options based on Delta Exchange format
-    const strikes = [108400, 109000, 110000, 111000, 112000, 113000];
-    const expiries = ['250926']; // Format: YYMMDD - September 26th, 2025 (next day)
+         // Generate mock BTC options based on Delta Exchange format
+     // Generate strikes around current BTC price
+     const basePrice = Math.round(currentBTCPrice / 1000) * 1000; // Round to nearest 1000
+     const strikes = [
+       basePrice - 2000,
+       basePrice - 1000,
+       basePrice,
+       basePrice + 1000,
+       basePrice + 2000,
+       basePrice + 3000
+     ];
+    // Generate realistic near-term expiration dates (today and next few days)
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const dayAfterTomorrow = new Date(today);
+    dayAfterTomorrow.setDate(today.getDate() + 2);
+    
+    const expiries = [
+      today.getFullYear().toString().slice(-2) + 
+      (today.getMonth() + 1).toString().padStart(2, '0') + 
+      today.getDate().toString().padStart(2, '0'),
+      tomorrow.getFullYear().toString().slice(-2) + 
+      (tomorrow.getMonth() + 1).toString().padStart(2, '0') + 
+      tomorrow.getDate().toString().padStart(2, '0'),
+      dayAfterTomorrow.getFullYear().toString().slice(-2) + 
+      (dayAfterTomorrow.getMonth() + 1).toString().padStart(2, '0') + 
+      dayAfterTomorrow.getDate().toString().padStart(2, '0')
+    ]; // Format: YYMMDD - Today, tomorrow, and day after tomorrow
     
     strikes.forEach(strike => {
       expiries.forEach(expiry => {
@@ -137,6 +176,23 @@ io.on('connection', (socket) => {
     res.json({ success: true, data: mockProducts, mock: true });
   });
 
+// Get current Bitcoin price
+app.get('/api/bitcoin-price', async (req, res) => {
+  try {
+    const priceData = await bitcoinPriceService.getCurrentPrice();
+    res.json({ 
+      success: true, 
+      data: priceData 
+    });
+  } catch (error) {
+    console.error('Error fetching Bitcoin price:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch Bitcoin price' 
+    });
+  }
+});
+
 // Get market data for all products
 app.get('/api/market-data', async (req, res) => {
   try {
@@ -160,131 +216,168 @@ app.get('/api/market-data', async (req, res) => {
     
     console.log(`Found ${btcTickers.length} BTC tickers from real API`);
     
-    marketData = btcTickers.reduce((acc, ticker) => {
-      // Extract data based on the actual Delta Exchange format
-      const quotes = ticker.quotes || {};
+    // If we got real data, process and return it
+    if (btcTickers.length > 0) {
+      marketData = btcTickers.reduce((acc, ticker) => {
+        // Extract data based on the actual Delta Exchange format
+        const quotes = ticker.quotes || {};
+        
+        acc[ticker.symbol] = {
+          symbol: ticker.symbol,
+          // Price data - use mark_price as the main price
+          price: parseFloat(ticker.mark_price) || parseFloat(ticker.close) || 0,
+          last_price: parseFloat(ticker.mark_price) || parseFloat(ticker.close) || 0,
+          // Bid/Ask from quotes
+          bid: parseFloat(quotes.best_bid) || 0,
+          ask: parseFloat(quotes.best_ask) || 0,
+          best_bid: parseFloat(quotes.best_bid) || 0,
+          best_ask: parseFloat(quotes.best_ask) || 0,
+          // Volume and OI
+          volume_24h: parseFloat(ticker.volume) || parseFloat(ticker.volume_24h) || 0,
+          volume: parseFloat(ticker.volume) || 0,
+          open_interest: parseFloat(ticker.oi) || parseFloat(ticker.oi_contracts) || 0,
+          oi: parseFloat(ticker.oi) || 0,
+          // Price changes
+          price_24h_change: parseFloat(ticker.price_24h_change) || parseFloat(ticker.change_24h) || 0,
+          change_24h: parseFloat(ticker.change_24h) || 0,
+          change_24h_percent: parseFloat(ticker.change_24h_percent) || 0,
+          // Additional useful fields
+          strike_price: parseFloat(ticker.strike_price) || 0,
+          contract_type: ticker.contract_type || '',
+          underlying_asset_symbol: ticker.underlying_asset_symbol || 'BTC',
+          // Keep original data for debugging
+          ...ticker
+        };
+        return acc;
+      }, {});
       
-      acc[ticker.symbol] = {
-        symbol: ticker.symbol,
-        // Price data - use mark_price as the main price
-        price: parseFloat(ticker.mark_price) || parseFloat(ticker.close) || 0,
-        last_price: parseFloat(ticker.mark_price) || parseFloat(ticker.close) || 0,
-        // Bid/Ask from quotes
-        bid: parseFloat(quotes.best_bid) || 0,
-        ask: parseFloat(quotes.best_ask) || 0,
-        best_bid: parseFloat(quotes.best_bid) || 0,
-        best_ask: parseFloat(quotes.best_ask) || 0,
-        // Volume and OI
-        volume_24h: parseFloat(ticker.volume) || parseFloat(ticker.volume_24h) || 0,
-        volume: parseFloat(ticker.volume) || 0,
-        open_interest: parseFloat(ticker.oi) || parseFloat(ticker.oi_contracts) || 0,
-        oi: parseFloat(ticker.oi) || 0,
-        // Price changes
-        price_24h_change: parseFloat(ticker.price_24h_change) || parseFloat(ticker.change_24h) || 0,
-        change_24h: parseFloat(ticker.change_24h) || 0,
-        change_24h_percent: parseFloat(ticker.change_24h_percent) || 0,
-        // Additional useful fields
-        strike_price: parseFloat(ticker.strike_price) || 0,
-        contract_type: ticker.contract_type || '',
-        underlying_asset_symbol: ticker.underlying_asset_symbol || 'BTC',
-        // Keep original data for debugging
-        ...ticker
-      };
-      return acc;
-    }, {});
-    
-    res.json({ success: true, data: marketData });
-  } catch (error) {
-      console.error('Error fetching market data:', error);
-      
-      // Always return mock data if API fails
-      console.log('API failed, returning mock market data...');
-      // Generate comprehensive mock market data
-      const mockData = {};
-      
-             // BTC Perpetual - Use realistic current BTC price
-       const btcPrice = 112271.90 + (Math.random() - 0.5) * 200; // Around $112,271.90 (current market price)
-       const btcBid = btcPrice - 50 - Math.random() * 100;
-       const btcAsk = btcPrice + 50 + Math.random() * 100;
-      
-      mockData['BTC-PERP'] = {
-        symbol: 'BTC-PERP',
-        price: btcPrice,
-        bid: btcBid,
-        ask: btcAsk,
-        volume_24h: Math.floor(Math.random() * 1000),
-        open_interest: Math.floor(Math.random() * 5000),
-        price_24h_change: (Math.random() - 0.5) * 500,
-        change_24h: (Math.random() - 0.5) * 500,
-        change_24h_percent: (Math.random() - 0.5) * 10,
-        // Additional fields for better data structure
-        last_price: btcPrice,
-        best_bid: btcBid,
-        best_ask: btcAsk,
-        volume: Math.floor(Math.random() * 1000)
-      };
-      
-      // Generate comprehensive mock data for all BTC options based on Delta Exchange format
-      const strikes = [108400, 109000, 110000, 111000, 112000, 113000];
-      const expiries = ['250926']; // Format: YYMMDD - September 26th, 2025 (next day)
-      
-      strikes.forEach(strike => {
-        expiries.forEach(expiry => {
-          // Call options
-          const callSymbol = `C-BTC-${strike}-${expiry}`;
-          const callPrice = 2800 + (Math.random() - 0.5) * 400;
-          const callBid = callPrice - 50 - Math.random() * 100;
-          const callAsk = callPrice + 50 + Math.random() * 100;
-          
-          mockData[callSymbol] = {
-            symbol: callSymbol,
-            price: callPrice,
-            last_price: callPrice,
-            bid: callBid,
-            ask: callAsk,
-            best_bid: callBid,
-            best_ask: callAsk,
-            volume_24h: 0.38 + Math.random() * 2,
-            volume: 0.38 + Math.random() * 2,
-            open_interest: 1.6 + Math.random() * 5,
-            oi: (1.6 + Math.random() * 5).toFixed(4),
-            price_24h_change: 0,
-            change_24h: 0,
-            change_24h_percent: 0,
-            strike_price: strike.toString(),
-            contract_type: 'call_options',
-            underlying_asset_symbol: 'BTC'
-          };
-          
-          // Put options
-          const putSymbol = `P-BTC-${strike}-${expiry}`;
-          const putPrice = 2856 + (Math.random() - 0.5) * 300;
-          const putBid = putPrice - 30 - Math.random() * 60;
-          const putAsk = putPrice + 30 + Math.random() * 60;
-          
-          mockData[putSymbol] = {
-            symbol: putSymbol,
-            price: putPrice,
-            last_price: putPrice,
-            bid: putBid,
-            ask: putAsk,
-            best_bid: putBid,
-            best_ask: putAsk,
-            volume_24h: 0.38 + Math.random() * 2,
-            volume: 0.38 + Math.random() * 2,
-            open_interest: 1.6 + Math.random() * 5,
-            oi: (1.6 + Math.random() * 5).toFixed(4),
-            price_24h_change: 0,
-            change_24h: 0,
-            change_24h_percent: 0,
-            strike_price: strike.toString(),
-            contract_type: 'put_options',
-            underlying_asset_symbol: 'BTC'
-          };
-        });
-      });
-      res.json({ success: true, data: mockData, mock: true });
+      res.json({ success: true, data: marketData, mock: false });
+      return;
     }
+    
+    // If no real data, fall through to mock
+    console.log('No real market data found, generating mock data...');
+    throw new Error('No real market data available');
+    
+  } catch (error) {
+    console.error('Error fetching market data:', error);
+    
+    // Always return mock data if API fails or returns empty
+    console.log('Generating mock market data...');
+    // Generate comprehensive mock market data
+    const mockData = {};
+    
+    // BTC Perpetual - Use current BTC price from service
+    const btcPrice = currentBTCPrice + (Math.random() - 0.5) * 200; // Around current BTC price
+    const btcBid = btcPrice - 50 - Math.random() * 100;
+    const btcAsk = btcPrice + 50 + Math.random() * 100;
+    
+    mockData['BTC-PERP'] = {
+      symbol: 'BTC-PERP',
+      price: btcPrice,
+      bid: btcBid,
+      ask: btcAsk,
+      volume_24h: Math.floor(Math.random() * 1000),
+      open_interest: Math.floor(Math.random() * 5000),
+      price_24h_change: (Math.random() - 0.5) * 500,
+      change_24h: (Math.random() - 0.5) * 500,
+      change_24h_percent: (Math.random() - 0.5) * 10,
+      // Additional fields for better data structure
+      last_price: btcPrice,
+      best_bid: btcBid,
+      best_ask: btcAsk,
+      volume: Math.floor(Math.random() * 1000)
+    };
+    
+    // Generate comprehensive mock data for all BTC options based on Delta Exchange format
+    // Generate strikes around current BTC price
+    const basePrice = Math.round(currentBTCPrice / 1000) * 1000; // Round to nearest 1000
+    const strikes = [
+      basePrice - 2000,
+      basePrice - 1000,
+      basePrice,
+      basePrice + 1000,
+      basePrice + 2000,
+      basePrice + 3000
+    ];
+    // Generate realistic near-term expiration dates (today and next few days)
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const dayAfterTomorrow = new Date(today);
+    dayAfterTomorrow.setDate(today.getDate() + 2);
+    
+    const expiries = [
+      today.getFullYear().toString().slice(-2) + 
+      (today.getMonth() + 1).toString().padStart(2, '0') + 
+      today.getDate().toString().padStart(2, '0'),
+      tomorrow.getFullYear().toString().slice(-2) + 
+      (tomorrow.getMonth() + 1).toString().padStart(2, '0') + 
+      tomorrow.getDate().toString().padStart(2, '0'),
+      dayAfterTomorrow.getFullYear().toString().slice(-2) + 
+      (dayAfterTomorrow.getMonth() + 1).toString().padStart(2, '0') + 
+      dayAfterTomorrow.getDate().toString().padStart(2, '0')
+    ]; // Format: YYMMDD - Today, tomorrow, and day after tomorrow
+    
+    strikes.forEach(strike => {
+      expiries.forEach(expiry => {
+        // Call options
+        const callSymbol = `C-BTC-${strike}-${expiry}`;
+        const callPrice = 2800 + (Math.random() - 0.5) * 400;
+        const callBid = callPrice - 50 - Math.random() * 100;
+        const callAsk = callPrice + 50 + Math.random() * 100;
+        
+        mockData[callSymbol] = {
+          symbol: callSymbol,
+          price: callPrice,
+          last_price: callPrice,
+          bid: callBid,
+          ask: callAsk,
+          best_bid: callBid,
+          best_ask: callAsk,
+          volume_24h: 0.38 + Math.random() * 2,
+          volume: 0.38 + Math.random() * 2,
+          open_interest: 1.6 + Math.random() * 5,
+          oi: (1.6 + Math.random() * 5).toFixed(4),
+          price_24h_change: 0,
+          change_24h: 0,
+          change_24h_percent: 0,
+          strike_price: strike.toString(),
+          contract_type: 'call_options',
+          underlying_asset_symbol: 'BTC'
+        };
+        
+        // Put options
+        const putSymbol = `P-BTC-${strike}-${expiry}`;
+        const putPrice = 2856 + (Math.random() - 0.5) * 300;
+        const putBid = putPrice - 30 - Math.random() * 60;
+        const putAsk = putPrice + 30 + Math.random() * 60;
+        
+        mockData[putSymbol] = {
+          symbol: putSymbol,
+          price: putPrice,
+          last_price: putPrice,
+          bid: putBid,
+          ask: putAsk,
+          best_bid: putBid,
+          best_ask: putAsk,
+          volume_24h: 0.38 + Math.random() * 2,
+          volume: 0.38 + Math.random() * 2,
+          open_interest: 1.6 + Math.random() * 5,
+          oi: (1.6 + Math.random() * 5).toFixed(4),
+          price_24h_change: 0,
+          change_24h: 0,
+          change_24h_percent: 0,
+          strike_price: strike.toString(),
+          contract_type: 'put_options',
+          underlying_asset_symbol: 'BTC'
+        };
+      });
+    });
+    
+    marketData = mockData;
+    res.json({ success: true, data: mockData, mock: true });
+  }
 });
 
 // Get order book for a specific product
@@ -448,6 +541,7 @@ server.listen(PORT, () => {
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
   deltaExchangeService.disconnect();
+  bitcoinPriceService.stopPeriodicUpdates();
   server.close(() => {
     console.log('Server closed');
     process.exit(0);
@@ -457,6 +551,7 @@ process.on('SIGTERM', () => {
 process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully');
   deltaExchangeService.disconnect();
+  bitcoinPriceService.stopPeriodicUpdates();
   server.close(() => {
     console.log('Server closed');
     process.exit(0);

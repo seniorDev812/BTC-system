@@ -67,8 +67,28 @@ const OptionChain = () => {
   };
 
   const getExpiryDates = () => {
-    const dates = [...new Set(products.map(p => p.expirationDate))];
-    return dates.sort();
+    const allDates = [...new Set(products.map(p => p.expirationDate))];
+    const sortedDates = allDates.sort((a, b) => {
+      // Handle perpetual futures
+      if (a === 'PERP') return 1;
+      if (b === 'PERP') return -1;
+      
+      // Handle Delta Exchange date format (YYMMDD)
+      if (a.length === 6 && /^\d{6}$/.test(a) && b.length === 6 && /^\d{6}$/.test(b)) {
+        return a.localeCompare(b);
+      }
+      
+      // Handle regular date format
+      try {
+        const dateA = new Date(a);
+        const dateB = new Date(b);
+        return dateA - dateB;
+      } catch (error) {
+        return a.localeCompare(b);
+      }
+    });
+    
+    return sortedDates;
   };
 
   const getMarketDataForProduct = (product) => {
@@ -155,7 +175,16 @@ const OptionChain = () => {
   const filteredProducts = products
     .filter(product => {
       const matchesSearch = product.symbol.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesExpiry = selectedExpiry === 'all' || product.expirationDate === selectedExpiry;
+      
+             // Filter by expiration date - show all expirations by default
+       let matchesExpiry = true;
+       if (selectedExpiry === 'all') {
+         // For 'all' selection, show all expirations
+         matchesExpiry = true;
+       } else {
+         matchesExpiry = product.expirationDate === selectedExpiry;
+       }
+      
       return matchesSearch && matchesExpiry;
     })
     .sort((a, b) => {
@@ -249,7 +278,7 @@ const OptionChain = () => {
           Option Chain
         </h1>
         <p className={`mt-1 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-          BTC Options & Futures from Delta Exchange
+          BTC Options & Futures from Delta Exchange (All Expirations)
         </p>
       </div>
 
@@ -285,7 +314,7 @@ const OptionChain = () => {
                   : 'bg-white border-gray-300 text-gray-900'
               }`}
             >
-              <option value="all">All Expiries</option>
+              <option value="all">All Expirations</option>
               {getExpiryDates().map(date => (
                 <option key={date} value={date}>
                   {formatDate(date)}
